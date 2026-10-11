@@ -1,6 +1,9 @@
 {
   "name": "dsh-degeneration-watchdog",
-  "version": "0.6.0",
+  "version": "0.7.0",
+  "scripts": {
+    "test": "node lib/detector.test.mjs && node selftest-shortline.mjs && node --test lib/index.test.mjs"
+  },
   "description": "Watchdog for DSH: detects degenerated (looping) AI streaming output, aborts the turn, runs /compact, then sends a continue message.",
   "type": "module",
   "main": "lib/index.js",
@@ -25,7 +28,8 @@
     "lib/index.js",
     "lib/detector.js",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "license": "MIT"
 }

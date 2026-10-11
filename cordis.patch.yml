@@ -26,7 +26,10 @@
         autoAbort: true
         autoCompact: true
         continueText: "继续"
-        # max rescues per rolling window (per session), 0 = unlimited
+        idleTimeoutMs: 15000
+        compactTimeoutMs: 90000
+        settleDelayMs: 450
+        # max rescues before an inactivity reset (per session), 0 = unlimited
         maxRescues: 3
         # ms of inactivity after a rescue before the counter decays
         cooldownMs: 60000

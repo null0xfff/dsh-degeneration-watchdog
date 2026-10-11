@@ -1,4 +1,5 @@
 import { detectDegeneration, normalizeConfig } from "./lib/detector.js";
+import assert from "node:assert/strict";
 const cfg = normalizeConfig({});
 
 // Case 1: the previously-missed sample — "循环甲乙丙丁" (6 chars < minLineLength 8)
@@ -27,3 +28,13 @@ const mixed = [];
 for (let i = 0; i < 10; i++) { mixed.push("等一下。"); mixed.push(`第${i}条各不相同的较长叙述内容在这里。`); }
 const r5 = detectDegeneration(mixed.join("\n"), cfg, "text");
 console.log("case5 (should be null):", r5?.reason ?? "null");
+
+assert.equal(r1?.reason, "line-cycle", "case1: repeated short lines");
+assert.equal(r1?.channel, "text");
+assert.equal(r1?.sample, "循环甲乙丙丁");
+assert.equal(r2, null, "case2: below short-line threshold");
+assert.equal(r3, null, "case3: prose sample");
+assert.equal(r4?.reason, "line-cycle", "case4: reasoning repetition");
+assert.equal(r4?.channel, "reasoning");
+assert.equal(r5, null, "case5: short filler with progressing content");
+console.log("5/5 short-line scenarios passed");
