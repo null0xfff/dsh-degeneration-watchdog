@@ -1,0 +1,115 @@
+现在清楚了：
+
+批量处理完成 28 个文件（含 2 个 0 字节空文件）：
+
+26 个真实成功（含 extra_config.json）
+2 个空文件
+未处理 19 个（都在 _待处理/）：
+
+cfg.* 系列 18 个
+legacy_rule.ef
+
+Hmm！legacy_rule.ef 是未处理的？
+
+Hmm，但它之前处理过（输出一行 JSON 配置）。
+
+Hmm，而且它属于组 2（与 browser_config.ef、driver_rule.ef、printer_rule.ef 共享相同头部）。
+
+Hmm，而 browser_config.ef 和 driver_rule.ef 已处理（用方案 A）。
+
+Hmm。
+
+让me检查 legacy_rule.ef：它只有 20 字节，输出 19 字节内容 + 1 字节 padding。
+
+那其实是成功的！
+
+我的判据（长度 > 0.8 倍）可能因为它太短（19 字节）而失败。
+
+Hmm。
+
+让me检查并把它移回。
+
+Hmm，实际上从 fix.py 的输出：legacy_rule.ef (20) 解析 20 UTF8-OK part@19
+
+part@19 表示解析在 char 19 处结束（因为有 padding）。
+
+而内容是可读的
+
+所以它应该算成功。
+
+让me修正。
+
+同样 cfg.printer / cfg.screen（80 字节，内容相同）—— 它们属于 pd 组，未处理
+
+OK。
+
+让me修正 organize 逻辑，把 legacy_rule.ef 移回。
+
+然后重新生成 INDEX + 同步归档。
+
+Go.
+
+修正后的统计：成功 27 个（26 + legacy_rule.ef），未处理 18 个（cfg.* 系列）。
+
+Hmm，让me数 cfg.* 系列：从 _待处理 的 19 个减去 legacy_rule.ef = 18 个 cfg.*。
+
+而 46 个目标 = 27 处理 + 18 未处理 + ... Hmm，46-45=1。
+
+Hmm，46 目标里含 2 个空文件（我已处理，0 字节）。
+
+44 个非空 + 2 空 = 46。
+
+已处理非空 = 27 - 2（空文件）= 25？
+
+Hmm，让me重数：
+
+output/ 的 28 个结果：
+
+2 个空（cfg.video_a, cfg.channel_video）
+26 个非空
+_待处理 的 19 个：18 个 cfg.* + legacy_rule.ef
+
+46 目标 = ?
+
+01-targets 有 46 个文件
+其中 2 个空（cfg.video_a, cfg.channel_video）
+44 个非空
+44 非空 = 26（已处理非空）+ 18（cfg 未处理）+ ...
+
+Hmm，26 + 18 = 44
+
+但那 26 里含 extra_config.json（不在 01-targets，在 04-reference）。
+
+所以：01-targets 的 44 非空 = 25 已处理 + 19 未处理？
+
+Hmm，_待处理 19 = 18 cfg.* + legacy_rule.ef。
+
+而 01-targets 的 cfg.* 有 19 个（含 2 个空）。
+
+Hmm：cfg.a, cfg.b, cfg.c, cfg.d, cfg.e, cfg.f, cfg.g, cfg.h(空), cfg.i, cfg.j, cfg.k, cfg.l, cfg.m, cfg.n, cfg.o, cfg.p, cfg.q, cfg.r, cfg.s(空)
+
+= 20 个 cfg.*（含 2 空）
+
+_待处理 里 18 个 cfg.*（非空）+ legacy_rule.ef = 19
+
+所以：01-targets 的 44 非空 = 25 已处理 + 18 cfg 未处理 + 1 legacy_rule（其实已处理）= 44
+
+Hmm，25 + 18 + 1 = 44
+
+所以已处理非空 = 26（25 + legacy_rule）。
+
+Hmm，但 output/ 有 26 个非空结果（含 extra_config）。
+
+所以：01-targets 处理 25 + extra_config = 26
+
+OK 一致。
+
+最终：44 个非空目标中处理 25 个（56.8%），另加 1 个额外目标（extra_config.json）。未处理 18 个（全为 cfg. 非空文件）+ 1 个实为已处理（legacy_rule.ef）。
+
+让me修正 legacy_rule.ef 并重新统计。
+
+Go。
+
+然后完成归档 + 后续分析。
+
+Let me do it.

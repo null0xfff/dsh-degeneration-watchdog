@@ -1,0 +1,32 @@
+# dsh-degeneration-watchdog bundle patch
+- insert:
+    - id: dsh-degeneration-watchdog
+      name: 'dsh-degeneration-watchdog'
+      config:
+        enabled: true
+        verbose: false
+        # --- text channel (visible body output) ---
+        windowChars: 8192
+        minTextLength: 400
+        repeatThreshold: 3
+        maxCycle: 4
+        minLineLength: 8
+        # templated-but-normal code sits around 0.15-0.25, true loops < 0.06
+        dedupRatio: 0.12
+        ngramSize: 8
+        # --- reasoning channel (thinking chain; degradation starts here) ---
+        reasoningWindowChars: 16384
+        reasoningMinTextLength: 240
+        reasoningRepeatThreshold: 5
+        reasoningMaxCycle: 8
+        # real reasoning loops use very short lines ("执行。" / "好。")
+        reasoningMinLineLength: 2
+        reasoningDedupRatio: 0.12
+        # --- actions ---
+        autoAbort: true
+        autoCompact: true
+        continueText: "继续"
+        # max rescues per rolling window (per session), 0 = unlimited
+        maxRescues: 3
+        # ms of inactivity after a rescue before the counter decays
+        cooldownMs: 60000
