@@ -1,95 +1,224 @@
-# dsh-degeneration-watchdog
+<h1 align="center">DSH Degeneration Watchdog</h1>
 
-![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg) ![node: >=20](https://img.shields.io/badge/node-%3E%3D20-5fa04e.svg) ![version](https://img.shields.io/badge/version-0.7.2-4d6bfe)
+<p align="center">模型开始重复打转时，自动尝试打断、压缩上下文并继续任务。</p>
 
-实时检测 AI 流式回复中的重复退化，执行 **打断 → 压缩 → 继续**。检测只做文本统计，不调用额外模型；压缩本身可能调用宿主配置的模型。
+<p align="center">
+  <a href="https://github.com/null0xfff/dsh-degeneration-watchdog/actions/workflows/test.yml"><img src="https://github.com/null0xfff/dsh-degeneration-watchdog/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/version-0.7.2-276749" alt="Version 0.7.2"></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/node-%3E%3D20-417e38" alt="Node.js >=20"></a>
+  <a href="#许可证"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
+  <a href="https://github.com/null0xfff/dsh-degeneration-watchdog/stargazers"><img src="https://img.shields.io/github/stars/null0xfff/dsh-degeneration-watchdog?style=flat" alt="GitHub stars"></a>
+</p>
 
-## 工作方式
+<p align="center">
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#工作方式">工作方式</a> ·
+  <a href="#配置">配置</a> ·
+  <a href="#常见问题">常见问题</a> ·
+  <a href="CHANGELOG.md">更新记录</a>
+</p>
 
-订阅 `agent/assistant-stream`，按正文 `text-delta` 和思维链 `reasoning-delta` 独立累积。缓冲按 agent 和 attempt 分隔，避免不同会话之间串流。
+## 它解决什么问题
 
-- **行级循环**：正文检测最多 4 行、至少 3 次的周期；思维链检测最多 8 行、至少 5 次的周期。
-- **n-gram 塌缩**：尾部窗口的 distinct/total 比率低于默认阈值 `0.12`。
-- **正文短行路径**：最低行长 2 字符，至少重复 8 次。
+让 DSH 跑长任务时，模型有时会连续输出相同的句子，或在思维链里反复出现“执行。／好。／执行。／好。”。流还在输出，任务却停在原地。
 
-空行不参与周期比较；变化的非空短行会保留，避免把持续推进的短标签和重复长语句误判为连续循环。这些启发式仍可能命中正常的高度重复输出，可调整参数或关闭自动动作。
+`dsh-degeneration-watchdog` 是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的后台插件。它监测流式回复中的重复模式，命中后按配置尝试恢复会话：
 
-## 救援链
+```text
+正文或思维链出现重复模式
+          ↓
+取消当前回合，等待空闲
+          ↓
+通过宿主服务压缩上下文
+          ↓
+确认会话仍空闲，发送“继续”
+```
 
-1. `autoAbort` 开启时取消当前回合，并有界等待 agent 空闲。支持宿主 `whenIdle()`；未停止或等待超时则结束本次救援。
-2. 优先调用 `commands.execute(agent, "/compact", [], signal)`，检查当前宿主的 `{ commandId, result }` 返回值，同时支持旧版直接返回 `CommandResult`。
-3. 命令服务不存在或没有解析到 `/compact` 时，调用 agent 所属 `compaction.compactNow()`。已执行命令返回错误或抛出异常时结束救援，不重复执行另一压缩通道。
-4. 压缩成功后等待 `settleDelayMs`，再次确认 agent 空闲，再发送 `continueText`。
+| 能力 | 实际行为 |
+| --- | --- |
+| 正文与思维链双通道 | 分别累积、分别检测，思维链使用更低的行长门槛 |
+| 两类重复信号 | 检查连续行周期和尾部文本的 n-gram 重复比例 |
+| 按会话隔离 | 不同 agent、不同流式 attempt 的缓冲分开维护 |
+| 有界救援 | 停止等待、压缩调用均有超时，每会话有救援预算 |
+| 卸载与重载处理 | 取消旧实例的等待；未结束压缩在同一宿主运行环境、同一 agent 上保持互斥 |
+| 可排查的日志 | 记录命中原因与救援步骤，自动创建日志目录 |
 
-`followup()` 是普通模型消息入口，插件不再用它发送 `/compact`。两个服务通道均不可用、执行失败、超时或插件卸载时，停止本次救援并记录原因。两个自动动作均关闭时只进行被动检测。
+检测采用本地文本统计，不额外调用模型。上下文压缩和后续续写仍可能产生宿主模型费用。**重复检测是启发式判断，正常的高度重复内容也可能命中。**
 
-超时会中止传入服务的 signal；若服务忽略取消，插件仍观察其 Promise，并在它真正结束前阻止该 agent 的新压缩，避免重叠修改会话。未结束任务的互斥状态通过 WeakMap 保留，在同一宿主 JavaScript realm 中重新挂载插件或重载模块后仍对同一 agent 生效。超时后的迟到结果不会发送“继续”。插件或 agent 卸载时取消进行中的等待、续写延迟和自测定时器。
+## 快速开始
 
-每会话最多连续救援 `maxRescues` 次，`0` 表示不限。距上次救援开始超过 `cooldownMs` 后，下一次救援重置计数；这是空闲间隔重置，不是滚动窗口限流。
+### 安装
 
-## 安装
+先准备好可运行的 DeepSeek Harness。插件声明 Node.js `>=20`；宿主自身的 Node.js 要求以所用 DSH 版本为准。
+
+安装到 Web profile：
 
 ```sh
 dsh plugin --profile web add https://github.com/null0xfff/dsh-degeneration-watchdog
 ```
 
-桌面端可在 Plugins 中添加同一仓库 URL。手动安装时，在 profile 的 `package.json` 中加入依赖并在 `dsh.profile.bundles` 注册，安装依赖后重启 DSH。
+桌面端可在 **Plugins → 添加插件** 中使用同一地址：
+
+```text
+https://github.com/null0xfff/dsh-degeneration-watchdog
+```
+
+安装或更新后重启对应 DSH 应用，让宿主加载新代码。仓库已包含运行所需的 JavaScript，使用插件无需先构建本项目。
+
+### 确认生效
+
+插件在后台运行，没有独立页面或聊天命令。加载时，宿主控制台与插件日志会出现包含以下内容的记录：
+
+```text
+plugin loaded v0.7.2 selftestReasoning=false
+```
+
+默认开启检测、自动取消和自动压缩；成功完成配置的救援动作后发送“继续”。日常使用无需手动触发。日志位置见[日志与排查](#日志与排查)。
+
+## 工作方式
+
+### 如何判断重复
+
+插件订阅 `agent/assistant-stream`，分别处理正文 `text-delta` 和思维链 `reasoning-delta`。
+
+| 判据 | 正文默认值 | 思维链默认值 |
+| --- | --- | --- |
+| 开始检测的累计长度 | 400 字符 | 240 字符 |
+| n-gram 统计尾部窗口 | 8,192 字符 | 16,384 字符 |
+| 行周期上限 | 4 行 | 8 行 |
+| 同一周期至少重复 | 3 次 | 5 次 |
+| 行周期的最低行长 | 8 字符 | 2 字符 |
+| n-gram distinct/total 阈值 | 低于 0.12 | 低于 0.12 |
+
+正文另有短行路径：最低行长 2 字符，至少重复 8 次，使用正文的周期上限。行比较会规范化空白与大小写，并忽略空行；变化的非空短行会保留，避免把短标签之间的重复长语句拼成虚假的连续循环。
+
+### 命中后如何恢复
+
+1. `autoAbort: true` 时取消当前回合，等待会话空闲。等待超时或取消失败，就结束本次救援。
+2. 优先通过宿主 `commands` 服务执行 `/compact`，确认命令返回成功。
+3. 命令服务不存在，或没有解析到 `/compact` 时，再尝试该 agent 的 `compaction.compactNow()` 服务。已执行命令返回错误或抛出异常时，结束本次救援。
+4. 等待 `settleDelayMs`，再次确认会话空闲，然后发送 `continueText`。
+
+插件只通过可确认结果的服务压缩上下文，不把普通模型消息当作 `/compact` 命令执行。服务缺失、失败或超时会记录停止原因。续写前若发现新的会话活动，也会跳过自动续写。
 
 ## 配置
 
-配置位于 `cordis.patch.yml`。
+仓库中的 [cordis.patch.yml](cordis.patch.yml) 给出默认配置。安装后，在目标 profile 的 `cordis.patch.yml` 中按插件 ID 覆盖需要调整的字段，保留已有的其他插件配置；修改后重启对应 DSH 应用。
 
-| 键 | 默认 | 说明 |
-|---|---|---|
-| enabled | true | 总开关 |
-| verbose | false | 命中时额外记录 attempt 与缓冲长度 |
-| windowChars / minTextLength | 8192 / 400 | 正文统计窗口与检测门槛 |
-| repeatThreshold / maxCycle / minLineLength | 3 / 4 / 8 | 正文行循环判据 |
-| shortLineMinLength / shortLineRepeatThreshold | 2 / 8 | 正文短行判据 |
-| dedupRatio / ngramSize | 0.12 / 8 | n-gram 塌缩判据 |
-| reasoningWindowChars / reasoningMinTextLength | 16384 / 240 | 思维链窗口与检测门槛 |
-| reasoningRepeatThreshold / reasoningMaxCycle / reasoningMinLineLength | 5 / 8 / 2 | 思维链行循环判据 |
-| reasoningDedupRatio | 0.12 | 思维链 n-gram 塌缩判据 |
-| autoAbort / autoCompact | true | 自动动作开关 |
-| continueText | 继续 | 成功救援后的续写指令 |
-| idleTimeoutMs | 15000 | 等待停止的超时，范围 100–300000ms |
-| compactTimeoutMs | 90000 | 每次压缩调用的超时，范围 100–600000ms |
-| settleDelayMs | 450 | 续写前稳定延迟，范围 0–5000ms |
-| maxRescues / cooldownMs | 3 / 60000 | 每会话预算与空闲间隔重置 |
-| selftestReasoning | false | 首个流结束后注入合成退化样本，执行真实救援 |
+下面是常用配置示例，未列出的字段沿用默认值：
 
-## 测试
+```yaml
+- id: dsh-degeneration-watchdog
+  config:
+    enabled: true
+    autoAbort: true
+    autoCompact: true
+    continueText: "继续"
+    maxRescues: 3
+    cooldownMs: 60000
+    idleTimeoutMs: 15000
+    compactTimeoutMs: 90000
+    settleDelayMs: 450
+```
 
-无需额外测试依赖，使用 Node.js 内置断言和测试运行器。
+### 动作与日志
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `enabled` | `true` | 检测总开关 |
+| `autoAbort` | `true` | 命中后取消当前回合 |
+| `autoCompact` | `true` | 命中后尝试压缩上下文 |
+| `continueText` | `继续` | 成功救援后的续写文本，须为非空白字符串 |
+| `maxRescues` | `3` | 每会话救援预算，范围 0–100；0 表示不限 |
+| `cooldownMs` | `60000` | 预算重置间隔，范围 1,000–3,600,000ms |
+| `idleTimeoutMs` | `15000` | 等待空闲的超时，范围 100–300,000ms |
+| `compactTimeoutMs` | `90000` | 每次压缩调用的超时，范围 100–600,000ms |
+| `settleDelayMs` | `450` | 续写前延迟，范围 0–5,000ms |
+| `verbose` | `false` | 命中时额外记录 attempt 与缓冲长度 |
+| `selftestReasoning` | `false` | 首个流结束后注入合成退化样本，会执行真实救援 |
+
+预算按**距上次救援开始的时间**重置：超过 `cooldownMs` 后，下一次救援从零重新计数。这不是滚动窗口限流。
+
+将 `autoAbort` 和 `autoCompact` 同时设为 `false` 可关闭自动动作；`enabled: false` 则关闭检测。布尔配置使用 YAML 的 `true` / `false`，不要写成带引号的字符串。`selftestReasoning` 仅用于验证救援链，日常保持关闭。
+
+### 检测参数
+
+| 正文参数 | 思维链参数 | 默认值：正文 / 思维链 | 用途 |
+| --- | --- | --- | --- |
+| `windowChars` | `reasoningWindowChars` | 8192 / 16384 | n-gram 统计尾部窗口 |
+| `minTextLength` | `reasoningMinTextLength` | 400 / 240 | 开始检测的累计长度 |
+| `repeatThreshold` | `reasoningRepeatThreshold` | 3 / 5 | 行周期最少重复次数 |
+| `maxCycle` | `reasoningMaxCycle` | 4 / 8 | 行周期上限 |
+| `minLineLength` | `reasoningMinLineLength` | 8 / 2 | 行周期最低行长 |
+| `dedupRatio` | `reasoningDedupRatio` | 0.12 / 0.12 | n-gram 比率低于此值时命中 |
+
+`ngramSize` 两通道共用，默认 `8`。正文短行路径使用 `shortLineMinLength`（默认 `2`）和 `shortLineRepeatThreshold`（默认 `8`）。完整默认值与归一化范围见 [lib/detector.js](lib/detector.js)。
+
+## 日志与排查
+
+设置了 `DSH_HOME` 时，日志写入：
+
+```text
+$DSH_HOME/plugins/dsh-degeneration-watchdog/watchdog.log
+```
+
+父目录会自动创建。没有 `DSH_HOME` 时，使用 `TEMP`、`TMP` 或当前目录中的 `dsh-degeneration-watchdog.log`。文件写入失败会向控制台报告一次，后续仍输出控制台日志。
+
+成功路径可通过这些日志关键字追踪：
+
+```text
+rescue start
+cancel issued
+compacted (command) 或 compacted (direct)
+continue message sent
+rescue done
+```
+
+提前停止时查看 `rescue stopped` 后的原因。日志记录检测通道、判据、比率及救援步骤，不记录触发检测的回复样本；宿主返回的命令结果和错误文本仍可能进入日志。文件暂未轮转，应自行管理保留周期。
+
+## 常见问题
+
+| 现象 | 检查方式 |
+| --- | --- |
+| 安装后找不到插件页面 | 它是后台插件。查看控制台或日志中的 `plugin loaded`，确认版本与启用状态 |
+| 已取消，但没有自动继续 | 查看 `rescue stopped`；检查等待超时、压缩服务缺失、命令错误或续写前出现新的会话活动 |
+| 看起来在重复，但没有触发 | 检查累计长度、重复门槛、是否跨 attempt；救援进行中或旧压缩未结束时会跳过新检测，预算耗尽时会跳过新救援 |
+| 正常内容被打断 | 确认命中的是行循环还是 n-gram；按通道提高重复门槛，或降低 n-gram 阈值。排查期间可关闭自动动作 |
+| 压缩超时后重载插件，仍未再次压缩 | 服务可能忽略了取消。对同一 agent，旧任务真正结束前会保留互斥，避免重叠操作 |
+| 更新后仍显示旧版本 | 重启对应 DSH 应用，再检查 `plugin loaded` 的版本记录 |
+
+## 兼容性与限制
+
+- 自动压缩依赖宿主的 `commands` 或 `compaction` 服务；插件本身不提供压缩模型或压缩引擎。
+- DSH 接口仍在演进，代码保留可选 registry、agent context 和旧版根服务表的解析路径。升级宿主后应验证实际压缩效果。
+- 缓冲按 agent 和 attempt 分隔，跨 attempt 的慢速退化不合并检测。
+- 无换行循环主要依赖 n-gram 信号，触发时机受窗口和阈值影响。
+- 热重载互斥适用于同一宿主 JavaScript realm、同一 agent 对象。忽略取消且永不结束的服务会持续阻止该 agent 的新压缩。
+- 本插件检测文本重复，不判断任务的语义进度，也不保证每次退化都能恢复。
+
+## 开发与测试
+
+克隆仓库后，使用 Node.js 内置断言与测试运行器：
 
 ```sh
+git clone https://github.com/null0xfff/dsh-degeneration-watchdog.git
+cd dsh-degeneration-watchdog
 npm test
 ```
 
-也可分别运行：
+测试无需额外测试依赖，覆盖检测器、配置边界、短行场景、超时与取消、迟到结果、卸载与热重载、会话隔离、预算和日志。生命周期用例使用虚拟宿主与计时器，另有真实模块加载和日志写入的冒烟验证；这些用例不等同于真实 DSH 会话的完整集成验证。
 
-```sh
-node lib/detector.test.mjs
-node selftest-shortline.mjs
-node --test lib/index.test.mjs
-```
+GitHub Actions 配置了 Linux / Windows、Node.js 20 / 22 的测试矩阵，运行结果见 [Actions](https://github.com/null0xfff/dsh-degeneration-watchdog/actions/workflows/test.yml)。
 
-用例覆盖正常文本、跨语言循环、变化短行、配置边界，以及救援成功、错误返回、超时、迟到结果、卸载清理、会话隔离、预算和日志。生命周期测试采用虚拟宿主和计时器，另有真实模块加载及日志写入的冒烟验证；不操作真实 DSH 会话。
+| 文件 | 作用 |
+| --- | --- |
+| [lib/detector.js](lib/detector.js) | 检测判据、默认值与配置归一化 |
+| [lib/index.js](lib/index.js) | 流订阅、救援、日志与生命周期 |
+| [cordis.patch.yml](cordis.patch.yml) | DSH bundle 默认配置 |
+| [CHANGELOG.md](CHANGELOG.md) | 版本变化与升级说明 |
 
-## 日志
+反馈问题时，可在 [Issues](https://github.com/null0xfff/dsh-degeneration-watchdog/issues) 附上插件版本、宿主版本、相关配置和去除私人信息后的日志片段。
 
-审计日志写入 `$DSH_HOME/plugins/dsh-degeneration-watchdog/watchdog.log`，父目录自动创建。没有 `DSH_HOME` 时使用 `TEMP`、`TMP` 或当前目录。文件写入失败会向控制台报告一次，后续仍输出控制台日志。
+## 许可证
 
-日志记录检测通道、判据、比率及救援步骤，不记录触发检测的回复样本。文件暂未轮转，应由部署端管理保留周期。
-
-## 已知限制
-
-- 跨 attempt 的慢速退化不合并检测。
-- 无换行循环依赖 n-gram 信号，触发时机取决于窗口和阈值。
-- 宿主接口尚未稳定；保留可选 registry 解析、agent context 解析和旧版根服务表适配。升级宿主后应验证服务解析与实际压缩效果。
-- 忽略取消且永不结束的服务会持续阻止该 agent 的新压缩；插件不会在状态未知时启动重叠压缩。
-- 普通高度重复的文本仍可能命中统计判据，检测不是语义进度判断。
-
-## License
-
-MIT
+MIT。
