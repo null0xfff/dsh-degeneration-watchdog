@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.2
+
+- Retain unresolved compaction ownership across plugin reapplication and module reloads in the same host JavaScript realm, keyed weakly by the exact agent.
+- Reserve ownership before provider invocation and release it only when the provider promise settles. Disposal aborts owned operations without discarding unresolved ownership.
+- Add regressions for reapplication and module reload with a provider that ignores cancellation.
+
 ## 0.7.1
 
 - Observe provider outcomes and cancellation before invoking a provider, containing synchronous disposal followed by a thrown error without an unhandled rejection.

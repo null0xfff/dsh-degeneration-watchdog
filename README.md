@@ -1,6 +1,6 @@
 # dsh-degeneration-watchdog
 
-![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg) ![node: >=20](https://img.shields.io/badge/node-%3E%3D20-5fa04e.svg) ![version](https://img.shields.io/badge/version-0.7.1-4d6bfe)
+![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg) ![node: >=20](https://img.shields.io/badge/node-%3E%3D20-5fa04e.svg) ![version](https://img.shields.io/badge/version-0.7.2-4d6bfe)
 
 实时检测 AI 流式回复中的重复退化，执行 **打断 → 压缩 → 继续**。检测只做文本统计，不调用额外模型；压缩本身可能调用宿主配置的模型。
 
@@ -23,7 +23,7 @@
 
 `followup()` 是普通模型消息入口，插件不再用它发送 `/compact`。两个服务通道均不可用、执行失败、超时或插件卸载时，停止本次救援并记录原因。两个自动动作均关闭时只进行被动检测。
 
-超时会中止传入服务的 signal；若服务忽略取消，插件仍观察其 Promise，并在它真正结束前阻止该 agent 的新压缩，避免重叠修改会话。超时后的迟到结果不会发送“继续”。插件或 agent 卸载时取消进行中的等待、续写延迟和自测定时器。
+超时会中止传入服务的 signal；若服务忽略取消，插件仍观察其 Promise，并在它真正结束前阻止该 agent 的新压缩，避免重叠修改会话。未结束任务的互斥状态通过 WeakMap 保留，在同一宿主 JavaScript realm 中重新挂载插件或重载模块后仍对同一 agent 生效。超时后的迟到结果不会发送“继续”。插件或 agent 卸载时取消进行中的等待、续写延迟和自测定时器。
 
 每会话最多连续救援 `maxRescues` 次，`0` 表示不限。距上次救援开始超过 `cooldownMs` 后，下一次救援重置计数；这是空闲间隔重置，不是滚动窗口限流。
 
