@@ -1,6 +1,6 @@
 # dsh-degeneration-watchdog
 
-![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg) ![node: >=20](https://img.shields.io/badge/node-%3E%3D20-5fa04e.svg) ![version](https://img.shields.io/badge/version-0.7.0-4d6bfe)
+![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg) ![node: >=20](https://img.shields.io/badge/node-%3E%3D20-5fa04e.svg) ![version](https://img.shields.io/badge/version-0.7.1-4d6bfe)
 
 实时检测 AI 流式回复中的重复退化，执行 **打断 → 压缩 → 继续**。检测只做文本统计，不调用额外模型；压缩本身可能调用宿主配置的模型。
 

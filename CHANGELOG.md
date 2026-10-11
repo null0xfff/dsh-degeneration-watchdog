@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.1
+
+- Observe provider outcomes and cancellation before invoking a provider, containing synchronous disposal followed by a thrown error without an unhandled rejection.
+- Check cancellation again immediately before provider invocation.
+- Add a regression that fails with the previous implementation.
+
 ## 0.7.0
 
 - Preserve changing nonempty short lines during cycle matching; keep blank-line tolerance.
