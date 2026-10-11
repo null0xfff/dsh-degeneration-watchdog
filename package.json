@@ -1,6 +1,6 @@
 {
   "name": "dsh-degeneration-watchdog",
-  "version": "0.4.2",
+  "version": "0.6.0",
   "description": "Watchdog for DSH: detects degenerated (looping) AI streaming output, aborts the turn, runs /compact, then sends a continue message.",
   "type": "module",
   "main": "lib/index.js",
