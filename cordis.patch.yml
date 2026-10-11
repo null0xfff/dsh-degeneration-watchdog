@@ -25,6 +25,7 @@
         # --- actions ---
         autoAbort: true
         autoCompact: true
+        resumeGoal: true
         continueText: "继续"
         idleTimeoutMs: 15000
         compactTimeoutMs: 90000

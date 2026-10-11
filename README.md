@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/null0xfff/dsh-degeneration-watchdog/actions/workflows/test.yml"><img src="https://github.com/null0xfff/dsh-degeneration-watchdog/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
-  <a href="package.json"><img src="https://img.shields.io/badge/version-0.7.2-276749" alt="Version 0.7.2"></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/version-0.8.0-276749" alt="Version 0.8.0"></a>
   <a href="package.json"><img src="https://img.shields.io/badge/node-%3E%3D20-417e38" alt="Node.js >=20"></a>
   <a href="#许可证"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
   <a href="https://github.com/null0xfff/dsh-degeneration-watchdog/stargazers"><img src="https://img.shields.io/github/stars/null0xfff/dsh-degeneration-watchdog?style=flat" alt="GitHub stars"></a>
@@ -27,11 +27,11 @@
 ```text
 正文或思维链出现重复模式
           ↓
-取消当前回合，等待空闲
+暂停活动 Goal（如有），保留排队输入并取消当前回合
           ↓
-通过宿主服务压缩上下文
+队列为空且会话空闲时，通过宿主服务压缩上下文
           ↓
-确认会话仍空闲，发送“继续”
+恢复本插件暂停的 Goal，或为普通会话发送“继续”
 ```
 
 | 能力 | 实际行为 |
@@ -39,6 +39,8 @@
 | 正文与思维链双通道 | 分别累积、分别检测，思维链使用更低的行长门槛 |
 | 两类重复信号 | 检查连续行周期和尾部文本的 n-gram 重复比例 |
 | 按会话隔离 | 不同 agent、不同流式 attempt 的缓冲分开维护 |
+| 保留排队输入 | 取消时保留下一轮消息与 steering 输入，排队输入优先于自动救援 |
+| 原生 Goal 恢复 | 成功救援后按暂停后的 revision 恢复 Goal，由宿主继续驱动轮次 |
 | 有界救援 | 停止等待、压缩调用均有超时，每会话有救援预算 |
 | 卸载与重载处理 | 取消旧实例的等待；未结束压缩在同一宿主运行环境、同一 agent 上保持互斥 |
 | 可排查的日志 | 记录命中原因与救援步骤，自动创建日志目录 |
@@ -70,10 +72,10 @@ https://github.com/null0xfff/dsh-degeneration-watchdog
 插件在后台运行，没有独立页面或聊天命令。加载时，宿主控制台与插件日志会出现包含以下内容的记录：
 
 ```text
-plugin loaded v0.7.2 selftestReasoning=false
+plugin loaded v0.8.0 selftestReasoning=false
 ```
 
-默认开启检测、自动取消和自动压缩；成功完成配置的救援动作后发送“继续”。日常使用无需手动触发。日志位置见[日志与排查](#日志与排查)。
+默认开启检测、自动取消、自动压缩和原生 Goal 恢复。成功救援后，有本插件暂停的 Goal 就恢复该 Goal；普通会话在队列为空且仍空闲时发送“继续”。日常使用无需手动触发。日志位置见[日志与排查](#日志与排查)。
 
 ## 工作方式
 
@@ -94,12 +96,13 @@ plugin loaded v0.7.2 selftestReasoning=false
 
 ### 命中后如何恢复
 
-1. `autoAbort: true` 时取消当前回合，等待会话空闲。等待超时或取消失败，就结束本次救援。
-2. 优先通过宿主 `commands` 服务执行 `/compact`，确认命令返回成功。
-3. 命令服务不存在，或没有解析到 `/compact` 时，再尝试该 agent 的 `compaction.compactNow()` 服务。已执行命令返回错误或抛出异常时，结束本次救援。
-4. 等待 `settleDelayMs`，再次确认会话空闲，然后发送 `continueText`。
+1. `autoAbort: true` 时，如果原生 `goals` 服务中有活动 Goal，先暂停它并记住返回的新 revision。处置在事件发布结束后的微任务中执行。
+2. 调用取消时传入 `keepInbox: true`，保留下一轮消息与 steering 输入，再等待会话空闲。排队输入已经存在或救援期间有新输入到达时，结束本次救援，让排队任务先执行。
+3. 优先通过宿主 `commands` 服务执行 `/compact`，确认命令返回成功。命令服务不存在或没有解析到命令时，尝试该 agent 的 `compaction.compactNow()` 服务；已执行命令返回错误或抛出异常时停止。
+4. 等待 `settleDelayMs`，再次确认会话空闲且没有排队输入。如果本插件暂停的 Goal 仍是同一 ID、同一 revision 且处于暂停状态，按 `resumeGoal` 设置恢复它；原生轮次驱动负责继续任务，不再插入普通“继续”。
+5. 普通会话没有未完成 Goal 时，发送 `continueText`。已有暂停、阻塞或未武装（`disarmed`）Goal、新出现的 Goal、或用户修改过的 Goal 都不会被普通续写替代。
 
-插件只通过可确认结果的服务压缩上下文，不把普通模型消息当作 `/compact` 命令执行。服务缺失、失败或超时会记录停止原因。续写前若发现新的会话活动，也会跳过自动续写。
+插件只通过可确认结果的服务压缩上下文，不把普通模型消息当作 `/compact` 命令执行。活动 Goal 的救援要求 `autoAbort: true`。Goal 服务不可用时保留普通会话路径；压缩服务缺失、失败、超时、排队输入竞争或卸载都会停止本次救援。由本插件暂停的 Goal 此时保持暂停，可检查日志后手动恢复；轮次预算耗尽也会保留宿主的错误结果。
 
 ## 配置
 
@@ -113,6 +116,7 @@ plugin loaded v0.7.2 selftestReasoning=false
     enabled: true
     autoAbort: true
     autoCompact: true
+    resumeGoal: true
     continueText: "继续"
     maxRescues: 3
     cooldownMs: 60000
@@ -128,7 +132,8 @@ plugin loaded v0.7.2 selftestReasoning=false
 | `enabled` | `true` | 检测总开关 |
 | `autoAbort` | `true` | 命中后取消当前回合 |
 | `autoCompact` | `true` | 命中后尝试压缩上下文 |
-| `continueText` | `继续` | 成功救援后的续写文本，须为非空白字符串 |
+| `resumeGoal` | `true` | 成功救援后恢复本插件暂停且未被修改的 Goal；false 时保持暂停 |
+| `continueText` | `继续` | 普通会话成功救援后的续写文本，须为非空白字符串 |
 | `maxRescues` | `3` | 每会话救援预算，范围 0–100；0 表示不限 |
 | `cooldownMs` | `60000` | 预算重置间隔，范围 1,000–3,600,000ms |
 | `idleTimeoutMs` | `15000` | 等待空闲的超时，范围 100–300,000ms |
@@ -174,14 +179,15 @@ continue message sent
 rescue done
 ```
 
-提前停止时查看 `rescue stopped` 后的原因。日志记录检测通道、判据、比率及救援步骤，不记录触发检测的回复样本；宿主返回的命令结果和错误文本仍可能进入日志。文件暂未轮转，应自行管理保留周期。
+Goal 路径还会出现 `goal paused`、`goal resumed`、`goal recovery disabled` 或 `goal recovery skipped: goal changed`。提前停止时查看 `rescue stopped` 后的原因。日志记录检测通道、判据、比率及救援步骤，不记录触发检测的回复样本；宿主返回的命令结果和错误文本仍可能进入日志。文件暂未轮转，应自行管理保留周期。
 
 ## 常见问题
 
 | 现象 | 检查方式 |
 | --- | --- |
 | 安装后找不到插件页面 | 它是后台插件。查看控制台或日志中的 `plugin loaded`，确认版本与启用状态 |
-| 已取消，但没有自动继续 | 查看 `rescue stopped`；检查等待超时、压缩服务缺失、命令错误或续写前出现新的会话活动 |
+| 已取消，但没有自动继续 | 有 Goal 时查看原生恢复记录；普通会话检查排队输入、等待超时、压缩服务缺失、命令错误或新的会话活动 |
+| Goal 仍处于暂停状态 | 检查 `resumeGoal`、排队输入、用户改过的 revision、压缩失败、卸载或 Goal 轮次预算；插件只恢复自己暂停且状态未变的目标 |
 | 看起来在重复，但没有触发 | 检查累计长度、重复门槛、是否跨 attempt；救援进行中或旧压缩未结束时会跳过新检测，预算耗尽时会跳过新救援 |
 | 正常内容被打断 | 确认命中的是行循环还是 n-gram；按通道提高重复门槛，或降低 n-gram 阈值。排查期间可关闭自动动作 |
 | 压缩超时后重载插件，仍未再次压缩 | 服务可能忽略了取消。对同一 agent，旧任务真正结束前会保留互斥，避免重叠操作 |
@@ -190,7 +196,7 @@ rescue done
 ## 兼容性与限制
 
 - 自动压缩依赖宿主的 `commands` 或 `compaction` 服务；插件本身不提供压缩模型或压缩引擎。
-- DSH 接口仍在演进，代码保留可选 registry、agent context 和旧版根服务表的解析路径。升级宿主后应验证实际压缩效果。
+- DSH 接口仍在演进，代码优先使用 `agentPresets.serviceFor`，保留可选 registry、agent context 和旧版根服务表解析。原生 Goal 集成测试针对 `0.2.0-rc.2`；其他宿主版本需要核验相应服务接口。
 - 缓冲按 agent 和 attempt 分隔，跨 attempt 的慢速退化不合并检测。
 - 无换行循环主要依赖 n-gram 信号，触发时机受窗口和阈值影响。
 - 热重载互斥适用于同一宿主 JavaScript realm、同一 agent 对象。忽略取消且永不结束的服务会持续阻止该 agent 的新压缩。
@@ -198,17 +204,20 @@ rescue done
 
 ## 开发与测试
 
-克隆仓库后，使用 Node.js 内置断言与测试运行器：
+完整测试使用 Node.js 22+，克隆仓库后安装锁定的开发依赖：
 
 ```sh
 git clone https://github.com/null0xfff/dsh-degeneration-watchdog.git
 cd dsh-degeneration-watchdog
+npm ci --ignore-scripts
 npm test
 ```
 
-测试无需额外测试依赖，覆盖检测器、配置边界、短行场景、超时与取消、迟到结果、卸载与热重载、会话隔离、预算和日志。生命周期用例使用虚拟宿主与计时器，另有真实模块加载和日志写入的冒烟验证；这些用例不等同于真实 DSH 会话的完整集成验证。
+`npm run test:unit` 无需额外测试依赖，覆盖检测器、配置边界、短行、超时与取消、迟到结果、卸载与热重载、会话隔离、预算和日志。另有真实模块加载和日志写入的冒烟验证。
 
-GitHub Actions 配置了 Linux / Windows、Node.js 20 / 22 的测试矩阵，运行结果见 [Actions](https://github.com/null0xfff/dsh-degeneration-watchdog/actions/workflows/test.yml)。
+`npm run test:integration` 使用真实 Session、Goal 和 Goal 轮次驱动服务，配合受控 Agent 与压缩替身，验证事件发布中的延迟写入、暂停后的 revision、原生轮次续跑、排队输入保留、用户编辑和轮次预算。测试使用临时目录，不读取用户会话、不调用模型；它不等同于完整真实模型会话验收。开发依赖不随插件发布包打包。
+
+GitHub Actions 配置 Linux / Windows 单测（Node.js 20 / 22）与集成测试（Node.js 22 / 24）矩阵，运行结果见 [Actions](https://github.com/null0xfff/dsh-degeneration-watchdog/actions/workflows/test.yml)。
 
 | 文件 | 作用 |
 | --- | --- |

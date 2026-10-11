@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.8.0
+
+- Cancel with `keepInbox: true`, preserving queued turn and steering input. Pending input takes priority over compaction and synthetic continuation; new input during rescue aborts dependent actions.
+- Pause active native Goals before cancellation and recover only the same paused revision after successful rescue. Native Goal recovery replaces synthetic continuation and respects round budgets and user edits.
+- Add `resumeGoal` (default `true`). Pre-existing paused/blocked/disarmed Goals remain unchanged. Failed rescue, input competition, disposal or disabled recovery leaves the plugin-paused Goal stopped for manual handling.
+- Defer rescue onto a microtask and use the native agent initiator for Goal mutations, avoiding nested session writes and duplicate cancellation.
+- Resolve current isolated services through `agentPresets.serviceFor` before legacy adapters; distinguish maintenance from idle and inspect native inbox lists.
+- Add queue/Goal regressions and real Session/Goal/goal-round-driver integration tests against DSH `0.2.0-rc.2`, with a controlled Agent and no model calls.
+- Lock integration-test development dependencies and add a Node 22/24 integration CI matrix alongside Node 20/22 unit tests.
+
+### Upgrade notes
+
+Successful rescue of an active Goal now resumes the native Goal instead of sending `continueText`. Ordinary conversations retain continuation when idle and no unfinished Goal or pending input owns the session. Set `resumeGoal: false` to keep a plugin-paused Goal stopped. On queue competition or failure, inspect the log and resume the Goal manually when appropriate. Goal rescue requires `autoAbort: true`.
+
+Full development tests now require `npm ci --ignore-scripts` and Node.js 22+. `npm run test:unit` retains the dependency-free path; runtime SDK packages are not bundled with the plugin.
+
 ## 0.7.2
 
 - Retain unresolved compaction ownership across plugin reapplication and module reloads in the same host JavaScript realm, keyed weakly by the exact agent.

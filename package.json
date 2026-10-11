@@ -1,10 +1,21 @@
 {
   "name": "dsh-degeneration-watchdog",
-  "version": "0.7.2",
+  "version": "0.8.0",
   "scripts": {
-    "test": "node lib/detector.test.mjs && node selftest-shortline.mjs && node --test lib/index.test.mjs"
+    "test": "npm run test:unit && npm run test:integration",
+    "test:unit": "node lib/detector.test.mjs && node selftest-shortline.mjs && node --test lib/index.test.mjs",
+    "test:integration": "node --test test/goal.integration.test.mjs"
   },
-  "description": "Watchdog for DSH: detects degenerated (looping) AI streaming output, aborts the turn, runs /compact, then sends a continue message.",
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.4",
+    "@deepseek-ai/dsh-agent": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-goal": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-goal-round-driver": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-session": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-session-projection": "0.2.0-rc.2"
+  },
+  "description": "Watchdog for DSH: detects looping output, preserves queued input, compacts context, and resumes native Goals or ordinary conversations.",
   "type": "module",
   "main": "lib/index.js",
   "engines": {
