@@ -1,6 +1,6 @@
 {
   "name": "dsh-degeneration-watchdog",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "scripts": {
     "test": "npm run test:unit && npm run test:integration",
     "test:unit": "node lib/detector.test.mjs && node selftest-shortline.mjs && node --test lib/index.test.mjs",

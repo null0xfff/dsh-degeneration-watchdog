@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.1
+
+- Fix rescue yielding to phantom pending input: while the host processes the plugin's own cancellation, the inbox projection read re-enters and throws; `hasPendingInput` treated any read failure as queued input and aborted the rescue 0–4 ms after `cancel issued` (observed repeatedly with an inbox that stayed empty for 62 minutes). Inbox read failures now mean "no pending input" and are logged (first 5 occurrences); genuine queued input is still honored by the post-idle probe and the `agent/inbox/inserted` listener.
+- Wait for agent idle before probing the inbox in `waitForIdle`: the pre-idle probe raced the host's abort cleanup and made the false positive above deterministic.
+- Document the interaction with third-party auto-continue plugins (e.g. dsh-purge): a synthetic "continue" sent ~300 ms after any non-user abort splices into the inbox before compaction completes (~41 s observed for 216 items / ~89k tokens) and either steals the rescue or produces a double continuation. Such plugins should exclude plugin-initiated cancels (e.g. the `parent` kind) or disable auto-continue while the watchdog owns the session.
+
 ## 0.8.0
 
 - Cancel with `keepInbox: true`, preserving queued turn and steering input. Pending input takes priority over compaction and synthetic continuation; new input during rescue aborts dependent actions.
